@@ -142,7 +142,7 @@ static void funcADCMonitor() {
     batteryVoltage = pin_voltage * DIVIDER_RATIO;
 }
 
-static void calibrateCurrentSensors() {                                                    // Вызывать пока нагрузка отключена (реле и зарядка выключены, ключи закрыты)
+static bool calibrateCurrentSensors() {                                                    // Вызывать пока нагрузка отключена (реле и зарядка выключены, ключи закрыты). false - ноль вне допуска
     uint32_t sum1 = 0, sum2 = 0;
     for (int i = 0; i < CALIBRATION_SAMPLES; i++) {
         adc_select_input(1);
@@ -153,6 +153,26 @@ static void calibrateCurrentSensors() {                                         
     }
     adcOffset1 = sum1 / CALIBRATION_SAMPLES;
     adcOffset2 = sum2 / CALIBRATION_SAMPLES;
+    return adcOffset1 >= CALIBRATION_ZERO_MIN && adcOffset1 <= CALIBRATION_ZERO_MAX &&
+           adcOffset2 >= CALIBRATION_ZERO_MIN && adcOffset2 <= CALIBRATION_ZERO_MAX;
+}
+
+static void sensorCalibrationError() {                                                     // Показываем найденные нули, пищим, затем штатно выключаемся (реле ещё не включено - нагрузки нет)
+    char buf[17];
+    lcd_clear();
+    lcd_set_cursor(0, 0);
+    lcd_print("SENSOR ERROR    ");
+    snprintf(buf, sizeof(buf), "I1:%4d I2:%4d ", (int)adcOffset1, (int)adcOffset2);
+    lcd_set_cursor(1, 0);
+    lcd_print(buf);
+    for (int i = 0; i < 3; i++) {
+        gpio_put(PIN_BUZZER, 1);
+        sleep_ms(200);
+        gpio_put(PIN_BUZZER, 0);
+        sleep_ms(200);
+    }
+    sleep_ms(2000);                                                                        // Время прочитать значения на экране
+    systemShutdown("  SENSOR ERROR  ");
 }
 
 static void lcdPrintTaskFunc() {
@@ -256,7 +276,9 @@ void doWork() {
     chargeState = false;                                                                     // чтобы через датчики не тёк зарядный ток
     gpio_put(PIN_PSU_TR, 0);
     gpio_put(PIN_BAT_TR, 0);
-    calibrateCurrentSensors();                                                               // Реле, зарядка и ключи выключены - токов нет, фиксируем ноль датчиков
+    if (!calibrateCurrentSensors()) {                                                        // Реле, зарядка и ключи выключены - токов нет, фиксируем ноль датчиков
+        sensorCalibrationError();
+    }
     gpio_put(PIN_RELAY, 1);
     lcd_clear();
     taskInit(&buttonTask, funcButtonMonitor, 50);
