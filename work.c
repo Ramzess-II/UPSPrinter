@@ -10,6 +10,7 @@ task_t logicTask, buttonTask, adcTask, lcdTask, buzzerTask, shedulerBuzzerTask, 
 float batteryVoltage = 0.0f;
 uint8_t stateOutTR = 0;
 uint16_t adc1TR1 = 0, adc2TR2 = 0;
+int32_t adcOffset1 = 0, adcOffset2 = 0;                                                        // Показания датчиков тока при нулевом токе (калибровка при старте)
 uint32_t buzzerDuration = 0, buzzerPause = 0;
 //------------------------------ функции ---------------------------------------------//
 static void taskInit(task_t *task, void (*task_func)(void), uint32_t interval_ms) {                // Функция инициализации структуры задачи
@@ -141,6 +142,19 @@ static void funcADCMonitor() {
     batteryVoltage = pin_voltage * DIVIDER_RATIO;
 }
 
+static void calibrateCurrentSensors() {                                                    // Вызывать пока нагрузка отключена (реле и зарядка выключены, ключи закрыты)
+    uint32_t sum1 = 0, sum2 = 0;
+    for (int i = 0; i < CALIBRATION_SAMPLES; i++) {
+        adc_select_input(1);
+        sum1 += adc_read();
+        adc_select_input(2);
+        sum2 += adc_read();
+        sleep_ms(1);
+    }
+    adcOffset1 = sum1 / CALIBRATION_SAMPLES;
+    adcOffset2 = sum2 / CALIBRATION_SAMPLES;
+}
+
 static void lcdPrintTaskFunc() {
     if (stateOutTR == STATE_STOP) return;
     if (stateOutTR == STATE_SOURCE_UNKNOWN) {
@@ -196,7 +210,7 @@ static void funcLogicTask(){
         systemShutdown("   SYSTEM OFF   ");
     }
     
-   int32_t adcDiff = (int32_t)adc1TR1 - (int32_t)adc2TR2;                                    // >0 - ток идёт через АКБ, <0 - через блок питания
+   int32_t adcDiff = ((int32_t)adc1TR1 - adcOffset1) - ((int32_t)adc2TR2 - adcOffset2);      // Отклонения от откалиброванного нуля: >0 - ток идёт через АКБ, <0 - через блок питания
    bool canChangeState = (stateOutTR != STATE_LOW_BAT && stateOutTR != STATE_STOP);
 
    if (adcDiff > SOURCE_SWITCH_THRESHOLD){
@@ -238,6 +252,11 @@ void doWork() {
     sleep_ms(400);
     gpio_put(PIN_BUZZER, 0);
     sleep_ms(800);
+    gpio_put(PIN_CHARGE, 0);                                                                 // На время калибровки явно запрещаем зарядку и держим ключи закрытыми,
+    chargeState = false;                                                                     // чтобы через датчики не тёк зарядный ток
+    gpio_put(PIN_PSU_TR, 0);
+    gpio_put(PIN_BAT_TR, 0);
+    calibrateCurrentSensors();                                                               // Реле, зарядка и ключи выключены - токов нет, фиксируем ноль датчиков
     gpio_put(PIN_RELAY, 1);
     lcd_clear();
     taskInit(&buttonTask, funcButtonMonitor, 50);
