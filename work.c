@@ -241,25 +241,26 @@ static void funcLogicTask(){
         gpio_put(PIN_CHARGE, 0);
         chargeState = false;
         if (canChangeState) stateOutTR = STATE_BAT;
-        idleTicks = 0;                                                                       // Принтер реально потребляет ток - простоя нет
    } else if (adcDiff < -SOURCE_SWITCH_THRESHOLD){
         gpio_put(PIN_PSU_TR, 1);
         gpio_put(PIN_BAT_TR, 0);
         gpio_put(PIN_LED_PSU, 1);
         gpio_put(PIN_LED_BAT, 0);
         if (canChangeState) stateOutTR = STATE_PSU;
-        idleTicks = 0;
    } else if (adcDiff > -SOURCE_NEUTRAL_THRESHOLD && adcDiff < SOURCE_NEUTRAL_THRESHOLD){     // Ток через оба датчика почти одинаковый - активный источник не определён,
         gpio_put(PIN_PSU_TR, 0);                                                             // закрываем оба ключа (см. гистерезис между SOURCE_NEUTRAL_THRESHOLD и SOURCE_SWITCH_THRESHOLD)
         gpio_put(PIN_BAT_TR, 0);
         gpio_put(PIN_LED_PSU, 0);
         gpio_put(PIN_LED_BAT, 0);
         if (canChangeState) stateOutTR = STATE_SOURCE_UNKNOWN;
-        if (idleTicks < IDLE_SHUTDOWN_TICKS) {
-            idleTicks++;
-        } else {
-            systemShutdown(" IDLE SHUTDOWN  ");                                              // Принтер не печатает уже IDLE_SHUTDOWN_MIN минут - выключаемся
-        }
+   }
+
+   if (gpio_get(PIN_BAT_TR) || gpio_get(PIN_PSU_TR)) {                                       // Простой = ни один ключ не открыт. Считаем по факту состояния ключей, а не по ветке выше:
+        idleTicks = 0;                                                                       // в зоне гистерезиса (между NEUTRAL и SWITCH) ветки не выполняются, и счётчик бы замирал
+   } else if (idleTicks < IDLE_SHUTDOWN_TICKS) {
+        idleTicks++;
+   } else {
+        systemShutdown(" IDLE SHUTDOWN  ");                                                  // Ни один ключ не открывался IDLE_SHUTDOWN_MIN минут - принтер не печатает, выключаемся
    }
 }
 
@@ -293,8 +294,8 @@ void doWork() {
     gpio_put(PIN_BAT_TR, 0);
     gpio_put(PIN_LED_PSU, 0);
     gpio_put(PIN_LED_BAT, 0);
-    gpio_put(PIN_CHARGE, 1);
-    chargeState = true;                                                                        // Совпадает с начальным gpio_put(PIN_CHARGE, 1) выше - funcChargeTask поправит это по факту через CHARGE_CHECK_INTERVAL_MS
+    gpio_put(PIN_CHARGE, 0);                                                                 // Зарядка выключена: funcChargeTask включит её, только когда АКБ просядет ниже порога
+    chargeState = false;
     gpio_put(PIN_TR_READ, 1);
     watchdog_enable(WATCHDOG_TIMEOUT_MS, true);                                             // Аппаратный watchdog: если главный цикл зависнет, МК перезагрузится
 }
